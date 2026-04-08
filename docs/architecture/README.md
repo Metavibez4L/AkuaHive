@@ -10,6 +10,13 @@ AkuaHive merges MemPalace (local AI memory engine) with XmetaV (multi-agent flee
 
 ```mermaid
 graph TB
+    subgraph "Dashboard (Next.js 16)"
+        PALACE_UI["Palace Browser<br/>wing/room search"]
+        KG_UI["KG Explorer<br/>entities + timeline"]
+        MEM_UI["Memory Dashboard<br/>status + AAAK playground"]
+        API["API Routes<br/>5 endpoints"]
+    end
+
     subgraph "Agent Fleet (XmetaV)"
         MAIN["main<br/>orchestrator"]
         WEB3["web3dev<br/>blockchain"]
@@ -46,6 +53,9 @@ graph TB
         IPFS["IPFS / Pinata"]
     end
 
+    PALACE_UI & KG_UI & MEM_UI --> API
+    API -->|subprocess| ADAPTER
+
     MAIN & WEB3 & ORACLE & SENTINEL & MIDAS & OTHER -->|task| SOUL
     SOUL -->|query| ADAPTER
     SOUL -->|compress| COMPRESS
@@ -74,6 +84,10 @@ graph TB
     style SUPA fill:#333,stroke:#666,color:#999
     style CHAIN fill:#333,stroke:#666,color:#999
     style IPFS fill:#333,stroke:#666,color:#999
+    style PALACE_UI fill:#1e3a5f,stroke:#ff006e,color:#fff
+    style KG_UI fill:#1e3a5f,stroke:#ff006e,color:#fff
+    style MEM_UI fill:#1e3a5f,stroke:#ff006e,color:#fff
+    style API fill:#1e3a5f,stroke:#ff006e,color:#fff
 ```
 
 ---
@@ -281,6 +295,65 @@ Wings are search filters, not hard partitions. An agent can search across all wi
 
 ---
 
+## Dashboard Architecture
+
+The dashboard is a Next.js 16 app (forked from XmetaV, rebranded AKUAHIVE) that provides a visual interface to palace, knowledge graph, and memory operations.
+
+```mermaid
+graph TB
+    subgraph "Dashboard Pages"
+        P1["/memory<br/>Unified Memory Dashboard"]
+        P2["/palace<br/>Palace Browser"]
+        P3["/knowledge<br/>KG Explorer"]
+    end
+
+    subgraph "API Routes (Next.js)"
+        A1["POST /api/palace/search<br/>Semantic search"]
+        A2["GET /api/palace/status<br/>Palace health"]
+        A3["GET /api/palace/kg<br/>KG stats + entities"]
+        A4["GET /api/palace/kg/entity<br/>Single entity triples"]
+        A5["POST /api/palace/compress<br/>AAAK compression"]
+    end
+
+    subgraph "Python subprocess"
+        S1["search_memories()"]
+        S2["palace status / list drawers"]
+        S3["KnowledgeGraph queries"]
+        S4["Dialect.compress()"]
+    end
+
+    P1 --> A2
+    P1 --> A3
+    P1 --> A5
+    P2 --> A1
+    P2 --> A2
+    P3 --> A3
+    P3 --> A4
+
+    A1 --> S1
+    A2 --> S2
+    A3 --> S3
+    A4 --> S3
+    A5 --> S4
+
+    style P1 fill:#1e3a5f,stroke:#ff006e,color:#fff
+    style P2 fill:#1e3a5f,stroke:#ff006e,color:#fff
+    style P3 fill:#1e3a5f,stroke:#ff006e,color:#fff
+    style A1 fill:#1e3a5f,stroke:#38bdf8,color:#fff
+    style A2 fill:#1e3a5f,stroke:#38bdf8,color:#fff
+    style A3 fill:#1e3a5f,stroke:#38bdf8,color:#fff
+    style A4 fill:#1e3a5f,stroke:#38bdf8,color:#fff
+    style A5 fill:#1e3a5f,stroke:#38bdf8,color:#fff
+    style S1 fill:#064e3b,stroke:#10b981,color:#fff
+    style S2 fill:#064e3b,stroke:#10b981,color:#fff
+    style S3 fill:#064e3b,stroke:#10b981,color:#fff
+    style S4 fill:#064e3b,stroke:#10b981,color:#fff
+```
+
+**API routes call Python directly** — each route spawns `python3 -c "..."` just like the bridge adapter. Same pattern, same 5s timeout, same non-fatal behavior. Dashboard never imports bridge code directly; it duplicates the subprocess pattern in API routes for Next.js server-side execution.
+
+---
+
 ## AAAK Compression Pipeline
 
 The AAAK Dialect compresses plain text into a symbolic format any LLM reads natively:
@@ -407,6 +480,27 @@ AkuaHive/
 │   ├── package.json
 │   └── tsconfig.json
 │
+├── dashboard/                    # Next.js 16 dashboard (forked from XmetaV)
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── (dashboard)/
+│   │   │   │   ├── layout.tsx    # Dashboard shell with sidebar
+│   │   │   │   ├── palace/       # Palace browser — wing/room filter, semantic search
+│   │   │   │   ├── knowledge/    # KG explorer — entities, relationships, timeline
+│   │   │   │   └── memory/       # Unified memory dashboard — status, wings, AAAK
+│   │   │   └── api/palace/
+│   │   │       ├── search/       # POST — semantic search via ChromaDB
+│   │   │       ├── status/       # GET — palace health + wing breakdown
+│   │   │       ├── kg/           # GET — KG stats + entities + timeline
+│   │   │       │   └── entity/   # GET — single entity triples + timeline
+│   │   │       └── compress/     # POST — AAAK compression
+│   │   ├── components/
+│   │   │   └── Sidebar.tsx       # Nav with Memory/Palace/Knowledge items
+│   │   └── lib/                  # Supabase client, utils
+│   ├── .env.example              # Environment template
+│   ├── package.json
+│   └── next.config.ts
+│
 ├── docs/
 │   ├── STATUS.md                 # Project status and roadmap
 │   ├── architecture/
@@ -417,7 +511,7 @@ AkuaHive/
 ├── tests/                        # Python tests
 ├── CLAUDE.md                     # Engineering guide for Claude Code
 ├── pyproject.toml                # Python package config
-└── README.md                     # User-facing documentation
+└── README.md                     # User-facing documentation (MemPalace)
 ```
 
 ---

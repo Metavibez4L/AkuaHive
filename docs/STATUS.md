@@ -1,7 +1,7 @@
 # AkuaHive — Project Status
 
-**Version:** 1.0.0
-**Date:** 2026-04-07
+**Version:** 1.1.0
+**Date:** 2026-04-08
 **Branch:** main
 
 ---
@@ -15,16 +15,19 @@ graph LR
         BR["Bridge Layer<br/>✅ 8 TypeScript files<br/>Node 20+"]
         KG["Knowledge Graph<br/>✅ SQLite<br/>~/.mempalace/"]
         CB["ChromaDB Palace<br/>✅ Local vector store<br/>~/.mempalace/palace/"]
+        DASH["Dashboard<br/>✅ Next.js 16<br/>3 palace pages + 5 API routes"]
     end
 
     MP --- CB
     MP --- KG
     BR -->|subprocess| MP
+    DASH -->|API routes| BR
 
     style MP fill:#064e3b,stroke:#10b981,color:#fff
     style BR fill:#1e3a5f,stroke:#38bdf8,color:#fff
     style KG fill:#1e3a5f,stroke:#e879f9,color:#fff
     style CB fill:#1e3a5f,stroke:#00f0ff,color:#fff
+    style DASH fill:#1e3a5f,stroke:#ff006e,color:#fff
 ```
 
 ---
@@ -40,11 +43,15 @@ graph LR
 | **AAAK Compression** | ✅ Working | — | ~30x compression on structured text |
 | **Knowledge Graph** | ✅ Working | — | Entity detection + temporal triples |
 | **ChromaDB Store** | ✅ Working | — | Semantic vector search across drawers |
+| **Dashboard** | ✅ Running | 0.1.0 | Next.js 16, forked from XmetaV, 3 palace pages |
+| **Palace Browser** | ✅ Working | — | Wing/room filter, semantic search, drawer results |
+| **KG Explorer** | ✅ Working | — | Entity list, relationship detail, timeline view |
+| **Memory Dashboard** | ✅ Working | — | Status cards, wing breakdown, AAAK playground |
+| **Palace API** | ✅ Working | — | 5 routes: search, status, kg, kg/entity, compress |
 | **Supabase Integration** | 🔲 Not started | — | v2: dual-read from Supabase + Palace |
 | **On-Chain Anchoring** | 🔲 Not started | — | v2: IPFS + Base Mainnet via XmetaV pattern |
 | **Dream Mode** | 🔲 Not started | — | v2: idle consolidation from palace data |
 | **MCP Upgrade** | 🔲 Not started | — | v2: replace subprocess with MCP stdio |
-| **Dashboard UI** | 🔲 Not started | — | v2: palace browser in XmetaV dashboard |
 
 ---
 
@@ -105,7 +112,7 @@ flowchart TD
 
 ## Roadmap
 
-### v1.0 (Current) — Local Memory Bridge
+### v1.0 — Local Memory Bridge
 - [x] Python subprocess adapter
 - [x] Palace semantic search in Soul context
 - [x] AAAK compression pipeline
@@ -114,13 +121,22 @@ flowchart TD
 - [x] CLAUDE.md engineering guide
 - [x] Design spec
 
+### v1.1 (Current) — Dashboard + API
+- [x] Fork XmetaV dashboard into AkuaHive
+- [x] Palace browser page (wing/room filter, semantic search, drawers)
+- [x] Knowledge Graph explorer (entity list, relationships, timeline)
+- [x] Unified Memory dashboard (status cards, wing breakdown, AAAK playground)
+- [x] 5 API routes (palace/search, palace/status, palace/kg, palace/kg/entity, palace/compress)
+- [x] Sidebar rebranded AKUAHIVE with Memory/Palace/Knowledge nav items
+- [x] Environment setup (Supabase, EVM, Solana, CDP, Slack, OpenAI, Jupiter)
+
 ### v2.0 — XmetaV Full Integration
 - [ ] Supabase dual-read (palace + Postgres)
 - [ ] On-chain anchoring for palace drawers
 - [ ] Dream mode using palace + KG data
 - [ ] MCP stdio upgrade (replace subprocess)
-- [ ] Dashboard palace browser page
 - [ ] Association reinforcement from palace hits
+- [ ] Real-time dashboard updates via Supabase Realtime
 
 ### v3.0 — Fleet Intelligence
 - [ ] Cross-agent entity resolution (KG unifies mentions)
