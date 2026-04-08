@@ -1,0 +1,17 @@
+{
+  "name": "@akuahive/bridge",
+  "version": "1.0.0",
+  "description": "AkuaHive bridge — connects MemPalace memory engine to Soul-style orchestration",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
