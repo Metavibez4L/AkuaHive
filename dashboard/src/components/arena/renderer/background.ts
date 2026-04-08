@@ -1,0 +1,531 @@
+import { Application, Container, Graphics, Text, BlurFilter } from "pixi.js";
+import {
+  GRID_COLS,
+  GRID_ROWS,
+  drawIsoTile,
+  strokeIsoTile,
+  drawIsoWall,
+  toScreen,
+} from "./iso";
+
+/**
+ * Draw the isometric office floor, glass partition walls, room labels,
+ * ambient particles, and scanline sweep.
+ *
+ * Layout (10×10 grid):
+ *   Rows 0–2  COMMAND room  (cols 2–6, walled)
+ *   Rows 3–5  MEETING area  (cols 3–6, open center)
+ *   Rows 6–9  left:  INTEL room    (cols 0–4, glass walls)
+ *             right: DEV FLOOR     (cols 5–9, open — no walls)
+ */
+export function initBackground(
+  app: Application,
+  scene: Container,
+): () => void {
+  const w = app.screen.width;
+  const h = app.screen.height;
+
+  // -- Scanline (fullscreen, behind scene) ----------------------------
+  const scanline = new Graphics();
+  scanline.rect(0, 0, w, 1).fill({ color: 0x00f0ff, alpha: 0.04 });
+  scanline.rect(0, -3, w, 7).fill({ color: 0x00f0ff, alpha: 0.01 });
+  app.stage.addChildAt(scanline, 0);
+
+  // -- Distant city skyline (parallax background) ---------------------
+  const cityLayer = new Graphics();
+
+  // Dark gradient sky (bottom-up)
+  cityLayer.rect(0, 0, w, h).fill({ color: 0x020408, alpha: 0.95 });
+
+  // Distant building silhouettes
+  const skylineY = h * 0.22; // horizon line
+  const buildings = [
+    { x: 0.05, bw: 0.03, bh: 0.14 },
+    { x: 0.09, bw: 0.025, bh: 0.22 },
+    { x: 0.12, bw: 0.04, bh: 0.12 },
+    { x: 0.18, bw: 0.02, bh: 0.18 },
+    { x: 0.22, bw: 0.035, bh: 0.09 },
+    { x: 0.28, bw: 0.05, bh: 0.25 },
+    { x: 0.35, bw: 0.03, bh: 0.16 },
+    { x: 0.42, bw: 0.02, bh: 0.2 },
+    { x: 0.48, bw: 0.04, bh: 0.1 },
+    { x: 0.55, bw: 0.025, bh: 0.28 },
+    { x: 0.60, bw: 0.035, bh: 0.14 },
+    { x: 0.67, bw: 0.03, bh: 0.22 },
+    { x: 0.73, bw: 0.04, bh: 0.11 },
+    { x: 0.78, bw: 0.025, bh: 0.19 },
+    { x: 0.84, bw: 0.05, bh: 0.15 },
+    { x: 0.91, bw: 0.03, bh: 0.24 },
+    { x: 0.96, bw: 0.035, bh: 0.13 },
+  ];
+  for (const b of buildings) {
+    const bx = b.x * w;
+    const bw = b.bw * w;
+    const bh = b.bh * h;
+    cityLayer
+      .rect(bx, skylineY - bh, bw, bh)
+      .fill({ color: 0x060c18, alpha: 0.9 });
+    // Lit windows (sparse)
+    const winCols = Math.floor(bw / 4);
+    const winRows = Math.floor(bh / 5);
+    for (let wr = 0; wr < winRows; wr++) {
+      for (let wc = 0; wc < winCols; wc++) {
+        if (Math.random() < 0.25) {
+          const colors = [0x00f0ff, 0xff006e, 0xf97316, 0x39ff14, 0xffffff];
+          const winColor = colors[Math.floor(Math.random() * colors.length)];
+          cityLayer
+            .rect(
+              bx + 1 + wc * 4,
+              skylineY - bh + 2 + wr * 5,
+              2,
+              2.5,
+            )
+            .fill({ color: winColor, alpha: 0.15 + Math.random() * 0.2 });
+        }
+      }
+    }
+  }
+
+  // Horizon glow line
+  cityLayer
+    .rect(0, skylineY, w, 1.5)
+    .fill({ color: 0x00f0ff, alpha: 0.06 });
+  cityLayer
+    .rect(0, skylineY - 1, w, 4)
+    .fill({ color: 0xff006e, alpha: 0.015 });
+
+  const cityBlur = new BlurFilter({ strength: 1.2, quality: 2 });
+  cityLayer.filters = [cityBlur];
+  cityLayer.alpha = 0.7;
+  app.stage.addChildAt(cityLayer, 0);
+
+  // -- Neon grid floor (infinite perspective grid) --------------------
+  const neonGrid = new Graphics();
+  // Horizontal lines receding to horizon
+  for (let i = 0; i < 20; i++) {
+    const gy = skylineY + i * i * 1.8;
+    if (gy > h) break;
+    neonGrid.rect(0, gy, w, 0.5).fill({
+      color: 0x00f0ff,
+      alpha: 0.02 + (i / 20) * 0.03,
+    });
+  }
+  // Vertical lines radiating from center
+  const cx = w / 2;
+  for (let i = -12; i <= 12; i++) {
+    const topX = cx + i * 8;
+    const botX = cx + i * 50;
+    neonGrid.moveTo(topX, skylineY);
+    neonGrid.lineTo(botX, h);
+    neonGrid.stroke({
+      color: 0x00f0ff,
+      width: 0.4,
+      alpha: 0.015 + Math.abs(i) * 0.001,
+    });
+  }
+  neonGrid.alpha = 0.6;
+  app.stage.addChildAt(neonGrid, 1);
+
+  // -- Rain overlay (cyberpunk) ----------------------------------------
+  const rainLayer = new Graphics();
+  interface RainDrop { x: number; y: number; len: number; speed: number; alpha: number }
+  const rainDrops: RainDrop[] = [];
+  for (let i = 0; i < 120; i++) {
+    rainDrops.push({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      len: 8 + Math.random() * 20,
+      speed: 200 + Math.random() * 350,
+      alpha: 0.02 + Math.random() * 0.06,
+    });
+  }
+  rainLayer.alpha = 0.7;
+  app.stage.addChildAt(rainLayer, 2);
+
+  // -- Shooting stars / satellite trails (rare, dramatic) ---------------
+  interface ShootingStar { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: number }
+  const shootingStars: ShootingStar[] = [];
+  let starTimer = 0;
+
+  // -- Neon billboard signs in skyline ---------------------------------
+  const billboardLayer = new Graphics();
+  interface Billboard { x: number; y: number; w: number; h: number; color: number; text: string; phase: number }
+  const billboards: Billboard[] = [
+    { x: w * 0.10, y: skylineY * 0.42, w: 28, h: 10, color: 0xff006e, text: "XMETA", phase: 0 },
+    { x: w * 0.30, y: skylineY * 0.28, w: 22, h: 8, color: 0x00f0ff, text: "AI", phase: 1.2 },
+    { x: w * 0.56, y: skylineY * 0.22, w: 32, h: 10, color: 0x39ff14, text: "AGENTS", phase: 2.4 },
+    { x: w * 0.78, y: skylineY * 0.38, w: 24, h: 8, color: 0xf59e0b, text: "WEB3", phase: 3.6 },
+    { x: w * 0.92, y: skylineY * 0.30, w: 20, h: 8, color: 0xa855f7, text: "SOUL", phase: 4.8 },
+  ];
+  // Static billboard backgrounds
+  for (const bb of billboards) {
+    billboardLayer.rect(bb.x - bb.w / 2, bb.y - bb.h / 2, bb.w, bb.h).fill({
+      color: 0x080c18,
+      alpha: 0.85,
+    });
+    billboardLayer.rect(bb.x - bb.w / 2, bb.y - bb.h / 2, bb.w, bb.h).stroke({
+      color: bb.color,
+      width: 0.5,
+      alpha: 0.3,
+    });
+  }
+  billboardLayer.alpha = 0.8;
+  app.stage.addChildAt(billboardLayer, 1);
+
+  // Dynamic billboard glow (redrawn each frame)
+  const billboardGlow = new Graphics();
+  app.stage.addChildAt(billboardGlow, 2);
+
+  // -- Data highway lines (pulsing along neon grid) --------------------
+  interface DataHighway { startX: number; y: number; speed: number; len: number; color: number; x: number }
+  const dataHighways: DataHighway[] = [];
+  for (let i = 0; i < 6; i++) {
+    const gy = skylineY + (i + 2) * (i + 2) * 1.8;
+    if (gy > h) break;
+    dataHighways.push({
+      startX: -60,
+      y: gy,
+      speed: 80 + Math.random() * 160,
+      len: 30 + Math.random() * 60,
+      color: [0x00f0ff, 0xff006e, 0x39ff14, 0xf59e0b][i % 4],
+      x: Math.random() * w,
+    });
+  }
+  const dataHighwayGraphics = new Graphics();
+  app.stage.addChildAt(dataHighwayGraphics, 2);
+
+  // -- Floor tiles ----------------------------------------------------
+  const floor = new Graphics();
+
+  // Command room floor (cols 2–6, rows 0–2) — brighter
+  for (let c = 2; c <= 6; c++) {
+    for (let r = 0; r <= 2; r++) {
+      drawIsoTile(floor, c, r, 0x0c1220, 0.85);
+      strokeIsoTile(floor, c, r, 0x00f0ff, 0.05, 0.5);
+    }
+  }
+
+  // Meeting area floor (cols 3–6, rows 3–5) — subtle tint
+  for (let c = 3; c <= 6; c++) {
+    for (let r = 3; r <= 5; r++) {
+      drawIsoTile(floor, c, r, 0x0a0f1c, 0.85);
+      strokeIsoTile(floor, c, r, 0x00f0ff, 0.04, 0.5);
+    }
+  }
+
+  // Intel room floor (cols 0–4, rows 6–9) — slightly blue-tinted
+  for (let c = 0; c <= 4; c++) {
+    for (let r = 6; r <= 9; r++) {
+      drawIsoTile(floor, c, r, 0x0a1020, 0.8);
+      strokeIsoTile(floor, c, r, 0x38bdf8, 0.04, 0.5);
+    }
+  }
+
+  // Web3 Lab cubicle (cols 7–9, rows 2–5) — orange-tinted private office
+  for (let c = 7; c <= 9; c++) {
+    for (let r = 2; r <= 5; r++) {
+      drawIsoTile(floor, c, r, 0x0f0d18, 0.8);
+      strokeIsoTile(floor, c, r, 0xf97316, 0.04, 0.5);
+    }
+  }
+
+  // Soul office (cols 0–1, rows 2–5) — magenta-tinted alcove
+  for (let c = 0; c <= 1; c++) {
+    for (let r = 2; r <= 5; r++) {
+      drawIsoTile(floor, c, r, 0x120818, 0.8);
+      strokeIsoTile(floor, c, r, 0xff006e, 0.04, 0.5);
+    }
+  }
+
+  // Dev floor (cols 5–9, rows 6–9) — standard open floor
+  for (let c = 5; c <= 9; c++) {
+    for (let r = 6; r <= 9; r++) {
+      drawIsoTile(floor, c, r, 0x080d18, 0.7);
+      strokeIsoTile(floor, c, r, 0x39ff14, 0.02, 0.5);
+    }
+  }
+
+  // General floor (remaining tiles)
+  for (let c = 0; c < GRID_COLS; c++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      // Skip already-drawn areas
+      if (c >= 2 && c <= 6 && r >= 0 && r <= 2) continue;
+      if (c >= 3 && c <= 6 && r >= 3 && r <= 5) continue;
+      if (c >= 7 && c <= 9 && r >= 2 && r <= 5) continue;  // Web3 Lab
+      if (c >= 0 && c <= 4 && r >= 6 && r <= 9) continue;
+      if (c >= 5 && c <= 9 && r >= 6 && r <= 9) continue;
+      drawIsoTile(floor, c, r, 0x080d18, 0.7);
+      strokeIsoTile(floor, c, r, 0x00f0ff, 0.03, 0.5);
+    }
+  }
+
+  scene.addChild(floor);
+
+  // -- Walls ----------------------------------------------------------
+  const walls = new Graphics();
+  const WALL_H = 45;
+  const PART_H = 28;
+
+  // ── Command room walls ─────────────────────────────────────────
+  // Back wall (row 0, cols 2–7)
+  drawIsoWall(walls, 2, 0, 7, 0, WALL_H, 0x0c1425, 0x00f0ff, 0.12);
+  // Left wall (col 2, rows 0–3)
+  drawIsoWall(walls, 2, 0, 2, 3, WALL_H, 0x0c1425, 0x00f0ff, 0.08);
+  // Right wall (col 7, rows 0–3) — very transparent
+  drawIsoWall(walls, 7, 0, 7, 3, WALL_H, 0x0c1425, 0x00f0ff, 0.05);
+  // Glass partitions at bottom of command room
+  drawIsoWall(walls, 2, 3, 4, 3, PART_H, 0x0c1425, 0x00f0ff, 0.08);
+  drawIsoWall(walls, 5, 3, 7, 3, PART_H, 0x0c1425, 0x00f0ff, 0.08);
+
+  // ── Intel room walls (glass enclosed) ──────────────────────────
+  // Back wall (row 6, cols 0–4.5)
+  drawIsoWall(walls, 0, 6, 4.5, 6, PART_H, 0x0c1425, 0x38bdf8, 0.10);
+  // Left wall (col 0, rows 6–10)
+  drawIsoWall(walls, 0, 6, 0, 10, PART_H, 0x0c1425, 0x38bdf8, 0.06);
+  // Right wall (col 4.5, rows 6–10) — glass partition
+  drawIsoWall(walls, 4.5, 6, 4.5, 10, PART_H, 0x0c1425, 0x38bdf8, 0.08);
+  // Front wall (row 10, cols 0–4.5) — lower glass
+  drawIsoWall(walls, 0, 10, 4.5, 10, PART_H * 0.6, 0x0c1425, 0x38bdf8, 0.06);
+
+  // ── Web3 Lab cubicle (private office, right side) ─────────────
+  // Back wall (row 2, cols 7–10)
+  drawIsoWall(walls, 7, 2, 10, 2, PART_H, 0x0c1425, 0xf97316, 0.10);
+  // Left wall (col 7, rows 2–5.5) — glass partition
+  drawIsoWall(walls, 7, 2, 7, 5.5, PART_H, 0x0c1425, 0xf97316, 0.08);
+  // Right wall (col 10, rows 2–5.5)
+  drawIsoWall(walls, 10, 2, 10, 5.5, PART_H, 0x0c1425, 0xf97316, 0.06);
+  // Front wall (row 5.5, cols 7–10) — lower glass with gap for entry
+  drawIsoWall(walls, 7, 5.5, 8, 5.5, PART_H * 0.6, 0x0c1425, 0xf97316, 0.06);
+  drawIsoWall(walls, 9, 5.5, 10, 5.5, PART_H * 0.6, 0x0c1425, 0xf97316, 0.06);
+
+  // ── Soul office (private alcove, left side) ───────────────────
+  // Back wall (row 2, cols 0–2) — connects to command room
+  drawIsoWall(walls, 0, 2, 2, 2, PART_H, 0x140818, 0xff006e, 0.10);
+  // Left wall (col 0, rows 2–5.5)
+  drawIsoWall(walls, 0, 2, 0, 5.5, PART_H, 0x140818, 0xff006e, 0.06);
+  // Front wall (row 5.5, cols 0–2) — lower glass with entry gap
+  drawIsoWall(walls, 0, 5.5, 0.5, 5.5, PART_H * 0.6, 0x140818, 0xff006e, 0.06);
+  drawIsoWall(walls, 1.5, 5.5, 2, 5.5, PART_H * 0.6, 0x140818, 0xff006e, 0.06);
+
+  scene.addChild(walls);
+
+  // -- Room labels ----------------------------------------------------
+  const labelStyle = {
+    fontFamily: "monospace",
+    fontSize: 8,
+    fill: "#00f0ff",
+    letterSpacing: 2,
+  };
+
+  // COMMAND label
+  const cmdLabel = new Text({
+    text: "COMMAND",
+    style: { ...labelStyle, fontSize: 9 },
+  });
+  const cmdPos = toScreen(4.5, 0.3);
+  cmdLabel.anchor.set(0.5, 0.5);
+  cmdLabel.position.set(cmdPos.x, cmdPos.y - 55);
+  cmdLabel.alpha = 0.25;
+  scene.addChild(cmdLabel);
+
+  // MEETING label
+  const meetLabel = new Text({ text: "MEETING", style: labelStyle });
+  const meetPos = toScreen(4.5, 3.5);
+  meetLabel.anchor.set(0.5, 0.5);
+  meetLabel.position.set(meetPos.x, meetPos.y - 15);
+  meetLabel.alpha = 0.2;
+  scene.addChild(meetLabel);
+
+  // INTEL label (inside intel room)
+  const intelLabel = new Text({
+    text: "INTEL",
+    style: { ...labelStyle, fill: "#38bdf8" },
+  });
+  const intelPos = toScreen(2, 6.3);
+  intelLabel.anchor.set(0.5, 0.5);
+  intelLabel.position.set(intelPos.x, intelPos.y - 10);
+  intelLabel.alpha = 0.25;
+  scene.addChild(intelLabel);
+
+  // WEB3 LAB label (private cubicle, right side)
+  const labLabel = new Text({
+    text: "WEB3 LAB",
+    style: { ...labelStyle, fill: "#f97316" },
+  });
+  const labPos = toScreen(8.5, 2.3);
+  labLabel.anchor.set(0.5, 0.5);
+  labLabel.position.set(labPos.x, labPos.y - 10);
+  labLabel.alpha = 0.25;
+  scene.addChild(labLabel);
+
+  // DEV FLOOR label (open area, right side)
+  const devLabel = new Text({
+    text: "DEV FLOOR",
+    style: { ...labelStyle, fill: "#39ff14" },
+  });
+  const devPos = toScreen(7, 6.3);
+  devLabel.anchor.set(0.5, 0.5);
+  devLabel.position.set(devPos.x, devPos.y - 10);
+  devLabel.alpha = 0.2;
+  scene.addChild(devLabel);
+
+  // SOUL label (private alcove, left side)
+  const soulLabel = new Text({
+    text: "SOUL",
+    style: { ...labelStyle, fill: "#ff006e", fontSize: 8 },
+  });
+  const soulPos = toScreen(0.5, 2.3);
+  soulLabel.anchor.set(0.5, 0.5);
+  soulLabel.position.set(soulPos.x, soulPos.y - 10);
+  soulLabel.alpha = 0.25;
+  scene.addChild(soulLabel);
+
+  // -- Ambient particles (in scene, around office area) ---------------
+  const particles: { g: Graphics; vx: number; vy: number }[] = [];
+  const topLeft = toScreen(0, 0);
+  const bottomRight = toScreen(GRID_COLS, GRID_ROWS);
+  const pMinX = topLeft.x - 100;
+  const pMaxX = bottomRight.x + 100;
+  const pMinY = topLeft.y - 60;
+  const pMaxY = bottomRight.y + 60;
+  const pW = pMaxX - pMinX;
+  const pH = pMaxY - pMinY;
+
+  for (let i = 0; i < 50; i++) {
+    const p = new Graphics();
+    const r = Math.random() * 1.5 + 0.5;
+    p.circle(0, 0, r).fill({
+      color: 0x00f0ff,
+      alpha: Math.random() * 0.1 + 0.03,
+    });
+    p.position.set(
+      pMinX + Math.random() * pW,
+      pMinY + Math.random() * pH,
+    );
+    scene.addChild(p);
+    particles.push({
+      g: p,
+      vx: (Math.random() - 0.5) * 0.2,
+      vy: -Math.random() * 0.25 - 0.05,
+    });
+  }
+
+  // -- Ticker ---------------------------------------------------------
+  let time = 0;
+  const tick = (ticker: { deltaMS: number }) => {
+    const dt = ticker.deltaMS / 1000;
+    time += dt;
+
+    // Scanline sweep (viewport coords)
+    scanline.position.y = ((time * 30) % (h + 20)) - 10;
+
+    // Neon grid pulse
+    neonGrid.alpha = 0.5 + Math.sin(time * 0.8) * 0.12;
+
+    // City skyline subtle parallax (very slow drift)
+    cityLayer.position.x = Math.sin(time * 0.05) * 1.5;
+
+    // ── Rain animation ──
+    rainLayer.clear();
+    for (const drop of rainDrops) {
+      drop.y += drop.speed * dt;
+      drop.x -= drop.speed * 0.08 * dt; // slight wind
+      if (drop.y > h) {
+        drop.y = -drop.len;
+        drop.x = Math.random() * w * 1.3;
+      }
+      if (drop.x < -20) drop.x = w + 10;
+      rainLayer.moveTo(drop.x, drop.y);
+      rainLayer.lineTo(drop.x - drop.len * 0.08, drop.y + drop.len);
+      rainLayer.stroke({ color: 0x6090c0, width: 0.5, alpha: drop.alpha });
+    }
+
+    // ── Shooting stars (spawn every ~4-8s) ──
+    starTimer += dt;
+    if (starTimer > 4 + Math.random() * 4) {
+      starTimer = 0;
+      const fromLeft = Math.random() > 0.5;
+      const colors = [0x00f0ff, 0xff006e, 0x39ff14, 0xf59e0b, 0xffffff];
+      shootingStars.push({
+        x: fromLeft ? -10 : w + 10,
+        y: Math.random() * skylineY * 0.6,
+        vx: (fromLeft ? 1 : -1) * (300 + Math.random() * 400),
+        vy: 60 + Math.random() * 120,
+        life: 0,
+        maxLife: 0.8 + Math.random() * 0.6,
+        color: colors[Math.floor(Math.random() * colors.length)],
+      });
+    }
+    for (let i = shootingStars.length - 1; i >= 0; i--) {
+      const s = shootingStars[i];
+      s.life += dt;
+      if (s.life >= s.maxLife) {
+        shootingStars.splice(i, 1);
+        continue;
+      }
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      const fade = 1 - s.life / s.maxLife;
+      const tailLen = 40 + fade * 30;
+      const tailX = s.x - (s.vx / Math.abs(s.vx)) * tailLen;
+      const tailY = s.y - (s.vy / Math.abs(s.vy)) * tailLen * 0.3;
+      // Draw on rain layer (reuses same redraw)
+      rainLayer.moveTo(tailX, tailY);
+      rainLayer.lineTo(s.x, s.y);
+      rainLayer.stroke({ color: s.color, width: 1.5, alpha: fade * 0.5 });
+      rainLayer.circle(s.x, s.y, 2).fill({ color: s.color, alpha: fade * 0.8 });
+    }
+
+    // ── Billboard glow pulse ──
+    billboardGlow.clear();
+    for (const bb of billboards) {
+      const pulse = 0.3 + Math.sin(time * 1.5 + bb.phase) * 0.2;
+      const flicker = Math.random() > 0.97 ? 0.1 : 0;
+      billboardGlow.rect(bb.x - bb.w / 2, bb.y - bb.h / 2, bb.w, bb.h).fill({
+        color: bb.color,
+        alpha: (pulse + flicker) * 0.15,
+      });
+      // Vertical light spill below billboard
+      billboardGlow.rect(bb.x - bb.w / 4, bb.y + bb.h / 2, bb.w / 2, 12 + pulse * 8).fill({
+        color: bb.color,
+        alpha: pulse * 0.04,
+      });
+    }
+
+    // ── Data highways (horizontal pulses along grid) ──
+    dataHighwayGraphics.clear();
+    for (const dh of dataHighways) {
+      dh.x += dh.speed * dt;
+      if (dh.x > w + dh.len) dh.x = -dh.len;
+      dataHighwayGraphics.moveTo(dh.x, dh.y);
+      dataHighwayGraphics.lineTo(dh.x + dh.len, dh.y);
+      dataHighwayGraphics.stroke({ color: dh.color, width: 1.5, alpha: 0.12 });
+      // Leading bright dot
+      dataHighwayGraphics.circle(dh.x + dh.len, dh.y, 2).fill({ color: dh.color, alpha: 0.3 });
+    }
+
+    // Particle drift
+    for (const p of particles) {
+      p.g.position.x += p.vx;
+      p.g.position.y += p.vy;
+      if (p.g.position.y < pMinY) {
+        p.g.position.y = pMaxY;
+        p.g.position.x = pMinX + Math.random() * pW;
+      }
+      if (p.g.position.x < pMinX) p.g.position.x = pMaxX;
+      if (p.g.position.x > pMaxX) p.g.position.x = pMinX;
+    }
+  };
+  app.ticker.add(tick);
+
+  return () => {
+    app.ticker.remove(tick);
+    scanline.destroy();
+    cityLayer.destroy();
+    neonGrid.destroy();
+    rainLayer.destroy();
+    billboardLayer.destroy();
+    billboardGlow.destroy();
+    dataHighwayGraphics.destroy();
+  };
+}
